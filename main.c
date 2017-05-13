@@ -16,13 +16,17 @@ int main(int argc, char* argv[])
 	if ( (fpIn = fopen(argv[1], "r")) == NULL)
 		error_msg(3, "bad file ", argv[1], "\n");
 
-	unsigned int maxdepth = 40;
-	unsigned int T = 2;
-	int numlevel = 10;
-	double p1 = 0.01;
-	int unfiltered = 7;
+    unsigned int N = pow(10,9);
+	unsigned int maxdepth = 27;
+	unsigned int T = 3;
+
+	int numlevel = ceil(log(N/pow(2,maxdepth) * (T-1)/T) / log(T));
+    printf("numlevel %d\n", numlevel);
+	double p1 = 0.3;
+	int unfiltered = 6;
 	unsigned int maxdels = pow(maxdepth, 5);
-	lsmtree* l = initialize(maxdepth, T, numlevel, p1, unfiltered, maxdels);
+	int pagesize = 500;
+	lsmtree* l = initialize(maxdepth, T, numlevel, p1, unfiltered, maxdels, pagesize);
 
 	while(!feof(fpIn))
 	{
@@ -31,18 +35,21 @@ int main(int argc, char* argv[])
 		{
 			//read (key, value) pair
 			fscanf(fpIn, "%d %d", &key, &value);
-			lsmt_insert(l, key, value);
 			//printf("p %d %d\n", key, value);
+			lsmt_insert(l, key, value);
 		}
 		else if (action == 'g')
 		{
 			//read key
 			fscanf(fpIn, "%d", &key);
+			//printf("g %d\n", key);
+            search(l, key, &value);
+            /*
 			if(search(l, key, &value) == 1)
 				printf("%d\n", value);
 			else
 				printf("not found\n");
-			//printf("g %d\n", key);
+                */
 		}
 		else if (action == 'd')
 		{

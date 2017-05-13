@@ -3,11 +3,13 @@
 #include "bloom.h"
 
 
-bloom_filter* create_bloom(int size) {
+bloom_filter* create_bloom(unsigned int size) {
   bloom_filter* res = calloc(1, sizeof(struct bloom_filter));
   res->n_elements = 0;
   res->size = size;
   res->bits = calloc(size, 8);
+  if(res->bits == NULL)
+	  error_msg(1, "cannot allocate bloom_filter\n");
   return res;
 }
 

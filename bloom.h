@@ -12,12 +12,12 @@ struct bloom_hash {
 typedef struct bloom_filter {
     struct bloom_hash *func; //list of hash functions
     void *bits;
-    int size;
+    unsigned int size;
     int n_elements;
 } bloom_filter;
 
 /* Creates a new bloom filter with no hash functions and size bytes. */
-bloom_filter* create_bloom(int size);
+bloom_filter* create_bloom(unsigned int size);
 
 /* Frees a bloom filter. */
 void free_bloom(bloom_filter* filter);
@@ -35,3 +35,4 @@ bool test_bloom(bloom_filter* filter, void *item);
 
 unsigned int djb2(const void* _str, int hash);
 void reset_bloom(bloom_filter* bf);
+extern void error_msg(int num, ...);

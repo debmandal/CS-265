@@ -23,6 +23,8 @@ typedef struct {
 	unsigned int maxdeletes;	//maximum number of deleted nodes
 	unsigned int curdeletes; // current number of deleted nodes
 	int unfiltered; // all levels above unfiltered have fpr 1
+    int** fence_ptrs;   //array of fence pointers (rather the key values)
+    int pagesize;
 } lsmtree;
 
 typedef struct pair {
@@ -54,4 +56,6 @@ int binsearch(int key, int* arr, int start, int end);
 void flush_tree_to_disk(lsmtree* l);
 void flush_to_disk(lsmtree* l);
 void lsmt_insert(lsmtree* l,  int key, int value);
-lsmtree* initialize(unsigned int maxdepth, unsigned int T, int numlevel, double p1, int unfiltered, unsigned int maxdels);
+lsmtree* initialize(unsigned int maxdepth, unsigned int T, int numlevel, double p1, int unfiltered, unsigned int maxdels, int pg);
+int binsearch_in_fence(int* arr, int start, int end, int key);
+int search_in_page(FILE* f, int start, int filesize, int pagesize, int key, int* value); 

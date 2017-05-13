@@ -84,8 +84,12 @@ list* range(lsmtree* l, int key1, int key2)
 	int low, high, mid;
 	int k, v, kprev, vprev;
 
+	quick_sort(l->deleted_nodes, 0, l->maxdeletes - 1);
 	for(key = key1; key < key2; key++)
 	{
+        //skip if key is present in deleted_nodes
+        if(binsearch(key, l->deleted_nodes, 0, l->maxdeletes - 1) == 1)
+            continue;
 		avl_node* an = avl_find(l->c0_tree, key);
 		if( an != NULL)
 		{
@@ -112,7 +116,7 @@ list* range(lsmtree* l, int key1, int key2)
 	{
 		int found = 0;
 		int index = 0;
-		//find the key closest to key1 in level i using binary search
+		//find the key closest to key1 in level i using binary search among the keys in the fence_ptrs 
 		low = 0;
 		high = l->file_sizes[i];
 		FILE* f = l->fptrs[i];
@@ -142,6 +146,13 @@ list* range(lsmtree* l, int key1, int key2)
 			fscanf(f, "%d", &v);
 			do
 			{
+                //skip if k is deleted
+                if(binsearch(k, l->deleted_nodes, 0, l->maxdeletes - 1) == 1)
+                {
+                    fscanf(f, "%d", &k);
+                    fscanf(f, "%d", &v);
+                    continue;
+                }
 				list* temp = malloc(sizeof(list));
 				if(temp == NULL)
 					error_msg(1, "cannot allocate temp in range\n");
@@ -176,6 +187,10 @@ int search(lsmtree* l, int key, int* value)
 {
 	int k = key;
 	int i;
+    //if the key is present in the list deleted_nodes, then the key is not present
+	quick_sort(l->deleted_nodes, 0, l->curdeletes);
+    if(binsearch(key, l->deleted_nodes, 0, l->curdeletes) == 1)
+        return -1;
 	//search in the avl tree
 	avl_node* an = avl_find(l->c0_tree,key);
 	if(an != NULL)
@@ -192,21 +207,69 @@ int search(lsmtree* l, int key, int* value)
 			if(test_bloom(l->bloom[i],&k))
 			{
 				//check for false positive
-				int found = search_in_file(l->fptrs[i], 0, l->file_sizes[i], key, value);
+                //first search in the fence_ptrs
+                int loc = binsearch_in_fence(l->fence_ptrs[i], 0, l->file_sizes[i] / l->pagesize, key);
+                if(loc == -1)
+                    continue;
+				int found = search_in_page(l->fptrs[i], 0, l->file_sizes[i], l->pagesize, key, value);
 				if(found == 1)
 					return 1;
-
+                
 			}
 		}
 		else
 		{
-			int found = search_in_file(l->fptrs[i], 0, l->file_sizes[i], key, value);
+            //first search in the fence_ptrs
+            int loc = binsearch_in_fence(l->fence_ptrs[i], 0, l->file_sizes[i] / l->pagesize, key);
+            if(loc == -1)
+                continue;
+			int found = search_in_page(l->fptrs[i], 0, l->file_sizes[i], l->pagesize, key, value);
 			if(found == 1)
 				return 1;
 		}	
 	}
 	//key not found
 	return -1;
+}
+
+//returns the loc such that arr[loc] <= key < arr[loc + 1]
+//or arr[end] <= key
+//otherwise returns -1
+int binsearch_in_fence(int* arr, int start, int end, int key)
+{
+    if(arr[end] <= key)
+        return end;
+
+    if(arr[start] > key)
+        return -1;
+    //now key is guaranteed to be within the range
+    int low = start;
+    int high = end;
+    int mid;
+
+    while(low <= high)
+    {
+        mid = (low + high) / 2;
+        if(key <= arr[mid+1] && key >= arr[mid])
+            return mid;
+        else if(key > arr[mid+1])
+            low = mid + 1;
+        else if(arr[mid-1] < key)
+            return mid-1;
+        else
+            high = mid-1;
+    }
+    return -1;
+}
+//search key in the page
+//start : the starting page
+//pagesize : page size
+int search_in_page(FILE* f, int start, int filesize, int pagesize, int key, int* value) 
+{
+    int low = start * pagesize;
+    int end = (start + 1)*pagesize > filesize ? filesize : (start + 1)*pagesize;
+
+    return search_in_file(f, low, end, key, value);
 }
 
 //binary search on file pointed to by f
@@ -308,7 +371,7 @@ void flush_to_disk(lsmtree* l)
 		//reset the bloom filter
 		reset_bloom(l->bloom[pos]);
 		//merging l->fptrs[pos] with the remaining entries of the array del_nodes
-		FILE* fp = fopen("temp.txt", "w");
+		FILE* fp = fopen("tempfile.txt", "w");
 		fseek(l->fptrs[pos], 0, SEEK_SET);
 		key1 = del_nodes[loc].key;
 		value1 = del_nodes[loc].value;
@@ -319,7 +382,6 @@ void flush_to_disk(lsmtree* l)
 		}
 		while(l->file_sizes[pos] < l->level_sizes[pos] && loc < limit)
 		{
-			
 			if(key1 < key2 && !binsearch(key1, l->deleted_nodes, 0, l->maxdeletes - 1))
 			{
 				fprintf(fp, "%d %d ", key1, value1);
@@ -350,7 +412,26 @@ void flush_to_disk(lsmtree* l)
 			l->file_sizes[pos]++;
 		}
 		fclose(l->fptrs[pos]);
+        fclose(fp);
 		//write temp in place of l->fptrs[pos]
+        char s[10];
+        sprintf(s, "file%d", pos+1);
+        //copy tempfile.txt to s
+        FILE* fpsrc = fopen("tempfile.txt", "r");
+        FILE* fpdst = fopen(s, "w");
+
+        int count = 0;
+        while(!feof(fpsrc))
+        {
+            int k, v;
+            fscanf(fpsrc, "%d %d ", &k, &v);
+            fprintf(fpdst, "%d %d ", k, v);
+            if(count % l->pagesize == 0)
+                l->fence_ptrs[pos][count % l->pagesize] = k;
+        }
+        fclose(fpsrc);
+        fclose(fpdst);
+
 		if (loc == limit)
 			break;
 		else if(pos >= l->maxdepth)
@@ -365,7 +446,6 @@ void flush_to_disk(lsmtree* l)
 //avl tree to disk and then insert in the avl tree
 void lsmt_insert(lsmtree* l,  int key, int value)
 {
-	
 	if (l->c0_tree->size >= pow(2,l->maxdepth))
 	{
 		flush_to_disk(l);	
@@ -381,7 +461,7 @@ void lsmt_insert(lsmtree* l,  int key, int value)
 //levels are multiplied by T
 //unfiltered : the false positive rates of all levels after unfiltered are 1
 
-lsmtree* initialize(unsigned int maxdepth, unsigned int T, int numlevel, double p1, int unfiltered, unsigned int maxdels)
+lsmtree* initialize(unsigned int maxdepth, unsigned int T, int numlevel, double p1, int unfiltered, unsigned int maxdels, int pg)
 {
 	lsmtree* l;
 	int i;
@@ -436,7 +516,8 @@ lsmtree* initialize(unsigned int maxdepth, unsigned int T, int numlevel, double 
 		if(i <= unfiltered)
 		{
 			//calculate number of bytes for i-th bloom filter
-			int bits = (ceil(pow(2,maxdepth) * pow(T,i) * log(1/l->false_pos[i]) / pow(log(2),2))) / 8;
+			unsigned int bits = (ceil(  (pow(2,maxdepth) * pow(T,i+1) * log(1/l->false_pos[i]))  / pow(log(2),2))) / 8;
+			printf("%d %d\n", i, bits);
 			l->bloom[i] = create_bloom(bits);
 			//calculate number of hash functions for the i-th bloom filter
 			double entries = pow(2,maxdepth) * pow(T,i);
@@ -451,5 +532,12 @@ lsmtree* initialize(unsigned int maxdepth, unsigned int T, int numlevel, double 
 		error_msg(1, "cannot allocate deleted_nodes in initialize\n");
 
 	l->curdeletes = 0;
+    l->pagesize = pg;
+
+    if( (l->fence_ptrs = (int**)malloc(sizeof(int*) * l->numlevel)) == NULL)
+        error_msg(1, "cannot allocate fence_ptrs\n");
+    for(i = 0; i < l->numlevel; i++)
+        if( (l->fence_ptrs[i] = (int*)malloc(sizeof(int) * (l->level_sizes[i] / l->pagesize))) == NULL)
+            error_msg(1, "cannot allocate fence ptrs i \n");
 	return l;
 }
